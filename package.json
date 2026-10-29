@@ -1,0 +1,27 @@
+{
+  "name": "portal-construccion",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Portal de construcción: proyectos, roles, tareas, agenda, documentos y topografía. Funciona 100% en local.",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "setup": "npm install && npm run seed",
+    "seed": "npm run seed -w server",
+    "dev": "node scripts/dev.mjs",
+    "start": "node scripts/start.mjs",
+    "build": "npm run build -w web",
+    "test": "npm test -w server",
+    "backup": "npm run backup -w server",
+    "typecheck": "npm run typecheck -w server",
+    "build:browser": "node scripts/build-browser.mjs"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "devDependencies": {
+    "sql.js": "^1.12.0"
+  }
+}

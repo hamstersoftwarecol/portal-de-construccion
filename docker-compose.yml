@@ -1,0 +1,9 @@
+services:
+  portal:
+    build: .
+    ports: ["3000:3000"]
+    volumes: ["portal-data:/data"]
+    environment:
+      DATA_DIR: /data
+volumes:
+  portal-data:

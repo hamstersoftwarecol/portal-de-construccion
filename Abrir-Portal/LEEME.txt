@@ -1,0 +1,5 @@
+PORTAL DE CONSTRUCCIÓN — versión que se abre con doble clic
+1. Haz doble clic en index.html (o en "ABRIR-PORTAL.html" en la carpeta de arriba). Se abre en tu navegador (Chrome, Edge, Firefox o Safari).
+2. Entra con admin@demo.local / Demo1234!  (otros: supervisor@, colaborador@, arquitecto@, ingeniero@, topografo@, plomero@, electricista@, soldador@ — misma clave).
+Los datos se guardan en tu navegador (no hay servidor). Para volver a empezar de cero: borra los datos del sitio o abre la consola y ejecuta __portalReset().
+No hay envío real de correos/WhatsApp ni Calendly en esta versión; la agenda local sí funciona.
