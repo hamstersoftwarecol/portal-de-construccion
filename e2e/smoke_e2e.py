@@ -1,0 +1,120 @@
+import re, sys, json, time, os
+from playwright.sync_api import sync_playwright, expect
+BASE='http://localhost:3000'
+errors=[]
+def login(ctx, key):
+    pg=ctx.new_page()
+    pg.on('console', lambda m: errors.append((key,m.text)) if m.type=='error' and 'favicon' not in m.text else None)
+    pg.on('pageerror', lambda e: errors.append((key,'PAGEERROR '+str(e))))
+    pg.goto(BASE+'/login'); pg.fill('#e', f'{key}@demo.local'); pg.fill('#p','Demo1234!'); pg.click('button:has-text("Entrar")')
+    pg.wait_for_url(BASE+"/"); return pg
+def pick(pg, sel, text):
+    v=pg.eval_on_selector(sel, "(s,t)=>[...s.options].find(o=>o.textContent.includes(t)).value", text)
+    pg.select_option(sel, v)
+def step(n): print('✔',n, flush=True)
+with sync_playwright() as p:
+    b=p.chromium.launch()
+    # ---------- supervisor ----------
+    ctx=b.new_context(viewport={'width':1280,'height':900}, accept_downloads=True)
+    pg=login(ctx,'supervisor')
+    expect(pg.get_by_text('Edificio Alameda 45')).to_be_visible(); step('login supervisor + lista de proyectos')
+    pg.screenshot(path='/tmp/claude-0/shots/01-proyectos.png')
+    pg.click('text=Edificio Alameda 45'); pg.wait_for_url(re.compile(r'/proyectos/1'))
+    pg.click('button[role=tab]:has-text("Tareas")')
+    expect(pg.get_by_text('Soldadura de columnas')).to_be_visible()
+    pg.click('button:has-text("+ Nueva tarea")')
+    pg.fill('.modal input[required]', 'Instalar lámparas de emergencia')
+    pg.select_option('.modal select >> nth=0', 'electricidad')
+    pick(pg,'.modal .field:has-text("Asignar a") select','Elena')
+    pg.click('.modal button:has-text("Crear tarea")')
+    expect(pg.get_by_text('Instalar lámparas de emergencia')).to_be_visible(); step('crear y asignar tarea desde la UI')
+    pg.screenshot(path='/tmp/claude-0/shots/02-tareas.png')
+    pg.click('text=Instalar lámparas de emergencia'); pg.wait_for_url(re.compile(r'/tareas/\d+'))
+    expect(pg.locator('option:checked').first).to_have_text(re.compile('Elena')); step('detalle de tarea')
+    # dashboard
+    pg.goto(BASE+'/proyectos/1?tab=dashboard'); expect(pg.get_by_text('Avance por fase')).to_be_visible(); step('dashboard de avance')
+    pg.screenshot(path='/tmp/claude-0/shots/03-dashboard.png', full_page=True)
+    # agenda: reservar
+    pg.goto(BASE+'/proyectos/1?tab=agenda'); pg.wait_for_selector('form:has-text("Agendar") select')
+    pick(pg,'form:has-text("Agendar") .field:has-text("Tipo de cita") select','Inspección eléctrica')
+    pick(pg,'form:has-text("Agendar") .field:has-text("Profesional") select','Elena')
+    # fecha: próximo día hábil +3
+    import datetime
+    d=datetime.date.today()+datetime.timedelta(days=3)
+    while d.weekday()>=5: d+=datetime.timedelta(days=1)
+    pg.fill('form:has-text("Agendar") input[type=date]', d.isoformat())
+    pg.wait_for_selector('.slot'); pg.locator('.slot').nth(2).click()
+    pg.click('button:has-text("Reservar")')
+    expect(pg.locator('.toast', has_text='Cita agendada')).to_be_visible(); step('reservar cita desde la UI')
+    pg.screenshot(path='/tmp/claude-0/shots/04-agenda.png', full_page=True)
+    # equipo + invitación
+    pg.goto(BASE+'/proyectos/1?tab=equipo'); expect(pg.get_by_text('Sergio Supervisor').first).to_be_visible(); step('equipo')
+    ctx.close()
+    # ---------- soldador: tareas, avance, offline ----------
+    ctx=b.new_context(viewport={'width':390,'height':800}, is_mobile=True)
+    pg=login(ctx,'soldador'); pg.goto(BASE+'/mis-tareas')
+    expect(pg.get_by_text('Soldadura de columnas')).to_be_visible(); step('mis tareas (móvil)')
+    pg.screenshot(path='/tmp/claude-0/shots/05-mis-tareas-movil.png')
+    pg.click('text=Soldadura de columnas'); pg.wait_for_url(re.compile(r'/tareas/3'))
+    pg.fill('textarea[placeholder*="hizo hoy"]', 'Cordón C5 terminado')
+    open('/tmp/claude-0/foto.png','wb').write(bytes.fromhex('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c6360000002000001e221bc330000000049454e44ae426082'))
+    pg.set_input_files('input[type=file][accept="image/*"]', '/tmp/claude-0/foto.png')
+    pg.click('button:has-text("Registrar avance")')
+    expect(pg.locator('.toast', has_text='Avance registrado')).to_be_visible(); expect(pg.locator('.photos img')).to_have_count(1); step('registrar avance con foto')
+    # offline: marcar hecha
+    print('BOTONES', [x.inner_text() for x in pg.locator('button').all()], pg.url)
+    pg.screenshot(path='/tmp/claude-0/shots/dbg2.png', full_page=True)
+    ctx.set_offline(True)
+    pg.click('button:has-text("Marcar hecha")')
+    expect(pg.locator('.offline')).to_be_visible(); step('modo sin conexión muestra aviso y encola el cambio')
+    ctx.set_offline(False)
+    pg.evaluate("window.dispatchEvent(new Event('online'))")
+    pg.wait_for_timeout(1500); pg.reload()
+    expect(pg.get_by_text('Hecha').first).to_be_visible(); step('cambio sincronizado al reconectar')
+    ctx.close()
+    # ---------- plomero: aislamiento ----------
+    ctx=b.new_context(viewport={'width':1280,'height':900}); pg=login(ctx,'plomero')
+    pg.goto(BASE+'/proyectos/1?tab=documentos')
+    expect(pg.get_by_text('Cronograma general de obra')).to_be_visible(); expect(pg.get_by_text('Plano de fachada')).to_have_count(0); step('plomero no ve el plano de arquitectura')
+    expect(pg.get_by_text('+ Subir documento')).to_have_count(0); step('plomero no ve el botón de subir')
+    pg.goto(BASE+'/proyectos/1?tab=tareas'); expect(pg.locator('tbody tr')).to_have_count(1); step('plomero ve solo su tarea')
+    ctx.close()
+    # ---------- arquitecto: documentos ----------
+    ctx=b.new_context(viewport={'width':1280,'height':900}); pg=login(ctx,'arquitecto')
+    pg.goto(BASE+'/proyectos/1?tab=documentos'); pg.click('button:has-text("+ Subir documento")')
+    open('/tmp/claude-0/plano.pdf','wb').write(b'%PDF-1.4 demo')
+    pg.fill('.modal input[required]', 'Corte longitudinal'); pg.set_input_files('.modal input[type=file]','/tmp/claude-0/plano.pdf'); pg.click('.modal button:has-text("Subir")')
+    expect(pg.get_by_text('Corte longitudinal')).to_be_visible(); step('subir documento')
+    pg.click('text=Corte longitudinal'); pg.click('button:has-text("Enviar a revisión")'); expect(pg.locator('.modal').get_by_text('En revisión')).to_be_visible(); step('enviar documento a revisión')
+    ctx.close()
+    # ---------- topógrafo ----------
+    ctx=b.new_context(viewport={'width':1280,'height':900}); pg=login(ctx,'topografo')
+    pg.goto(BASE+'/proyectos/1?tab=topografia'); pg.click('button:has-text("+ Nuevo registro")')
+    pg.fill('.modal .field:has-text("Título") input','Nivelación eje C'); pg.fill('.modal .field:has-text("Coordenada X") input','1004600.5'); pg.fill('.modal .field:has-text("Coordenada Y") input','1101300.2'); pg.fill('.modal .field:has-text("Nivel") input','2560.4')
+    pg.click('.modal button:has-text("Guardar")'); expect(pg.get_by_text('Nivelación eje C')).to_be_visible(); step('registro topográfico')
+    ctx.close()
+    # ---------- admin ----------
+    ctx=b.new_context(viewport={'width':1280,'height':900}, accept_downloads=True); pg=login(ctx,'admin')
+    pg.goto(BASE+'/admin'); expect(pg.get_by_text('Ana Administradora').first).to_be_visible()
+    pg.locator('tr:has-text("Pedro Plomero") button:has-text("Código de acceso")').click(); expect(pg.get_by_text('Código para')).to_be_visible(); step('código de restablecimiento')
+    pg.click('button:has-text("Tipos de cita")'); expect(pg.get_by_text('Inspección eléctrica')).to_be_visible()
+    pg.click('button:has-text("Auditoría")'); expect(pg.locator('tbody tr').first).to_be_visible()
+    pg.click('button:has-text("Integraciones")'); expect(pg.get_by_text('Agenda propia (local)')).to_be_visible(); step('panel de administración')
+    pg.screenshot(path='/tmp/claude-0/shots/06-admin.png')
+    pg.goto(BASE+'/proyectos/1?tab=dashboard')
+    with pg.expect_download() as dl: pg.click('a:has-text("Descargar Excel")')
+    assert dl.value.suggested_filename.endswith('.xlsx'); step('descarga de Excel')
+    with pg.expect_download() as dl: pg.click('a:has-text("Descargar PDF")')
+    assert dl.value.suggested_filename.endswith('.pdf'); step('descarga de PDF')
+    # nuevo proyecto
+    pg.goto(BASE+'/'); pg.click('button:has-text("+ Nuevo proyecto")'); pg.fill('.modal .field:has-text("Nombre") input','Casa Los Pinos'); pg.fill('.modal .field:has-text("Ubicación") input','Chía, Cundinamarca')
+    pg.click('.modal button:has-text("Crear proyecto")'); pg.wait_for_url(re.compile(r'/proyectos/\d+')); step('crear proyecto')
+    ctx.close()
+    # ---------- registro con invitación ----------
+    ctx=b.new_context(); pg=ctx.new_page()
+    pg.goto(BASE+'/registro'); pg.fill('#n','Nuevo Usuario'); pg.fill('#e','nuevo@demo.local'); pg.fill('#p','Clave12345'); pg.click('button:has-text("Registrarme")'); pg.wait_for_url(BASE+"/"); step('registro abierto')
+    # service worker
+    pg.wait_for_timeout(1500)
+    sw=pg.evaluate("navigator.serviceWorker.getRegistration().then(r=>!!r)"); print('service worker registrado:', sw)
+    ctx.close(); b.close()
+print('ERRORES DE CONSOLA:', errors if errors else 'ninguno')
